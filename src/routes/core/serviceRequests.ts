@@ -5,11 +5,10 @@ import {
     middleware,
     removeEmpty,
 } from "../../utils/helperFunctions";
-import { V1Service } from "@kubernetes/client-node";
+import { V1Service, V1ServicePort } from "@kubernetes/client-node";
 
 type ServiceBody = {
-    port: number;
-    targetPort: number;
+    ports: V1ServicePort[];
     externalIPs?: string[];
     loadBalancerIP?: string;
     clusterIP?: string;
@@ -55,8 +54,7 @@ serviceRouter.use("/:namespace?", (req, res, next) => {
 serviceRouter.post("/:name/:namespace?", async (req, res) => {
     const { name, namespace = "default" } = req.params;
     const {
-        port,
-        targetPort,
+        ports,
         externalIPs,
         loadBalancerIP,
         clusterIP,
@@ -105,7 +103,7 @@ serviceRouter.post("/:name/:namespace?", async (req, res) => {
             selector: {
                 app: name,
             },
-            ports: [{ port, targetPort, protocol: "TCP", name }],
+            ports,
         },
     };
 
