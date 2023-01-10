@@ -6,9 +6,9 @@ services:
       - "JAVA_OPTS=-Xmx4g"
     image: consensys/teku:latest
     command: [
-      "--data-base-path=/var/lib/teku/data/data/teku",
+      "--data-base-path=/var/lib/teku/data",
       "--ee-endpoint=http://localhost:8551",
-      "--ee-jwt-secret-file=/var/lib/teku/data/jwtsecret.hex",
+      "--ee-jwt-secret-file=/var/lib/teku/secrets/jwtsecret.hex",
       "--rest-api-enabled=true",
       "--metrics-enabled=true",
       "--log-destination=console",
@@ -21,7 +21,8 @@ services:
       "--metrics-interface=0.0.0.0"
     ]
     volumes:
-      - ./media/jam/Data/nodes/ethereum/mainnet:/var/lib/teku/data
+      - ./media/jam/Data/nodes/ethereum/mainnet/data/teku:/var/lib/teku/data
+      - ./media/jam/Data/nodes/ethereum/mainnet:/var/lib/teku/secrets
     ports:
       # Map the p2p port(9000) and REST API port(5051)
       - "9000:9000/tcp"
