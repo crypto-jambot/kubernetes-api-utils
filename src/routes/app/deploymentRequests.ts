@@ -1,5 +1,5 @@
 import { appClient } from "../../utils/apiClientUtil";
-import { V1Deployment } from "@kubernetes/client-node";
+import { V1Container, V1Deployment, V1Volume } from "@kubernetes/client-node";
 import { Router } from "express";
 import {
     makeRequest,
@@ -8,17 +8,13 @@ import {
 } from "../../utils/helperFunctions";
 
 type DeploymentBody = {
-    containerPort: number;
     replicas: number;
     imageVersion: string;
     serviceAccount?: string;
     annotations?: Record<string, string>;
     labels?: Record<string, string>;
-    env: Env[];
-};
-type Env = {
-    name: string;
-    value: string;
+    containers: V1Container[];
+    volumes: V1Volume[];
 };
 
 export const deploymentRouter = Router();
@@ -32,12 +28,11 @@ deploymentRouter.post("/:name/:namespace?", async (req, res) => {
     const { name, namespace = "default" } = req.params;
     const {
         replicas,
-        containerPort,
-        imageVersion,
         serviceAccount,
         annotations,
         labels,
-        env,
+        containers,
+        volumes,
     } = req.body as DeploymentBody;
     try {
         const deploymentRequest: V1Deployment = {
@@ -57,17 +52,9 @@ deploymentRouter.post("/:name/:namespace?", async (req, res) => {
                         },
                     },
                     spec: {
-                        containers: [
-                            {
-                                name: name,
-                                image: `${name}:${imageVersion}`,
-                                imagePullPolicy: "Never",
-                                ports: [{ containerPort }],
-                                env,
-                                args: [],
-                            },
-                        ],
+                        containers,
                         serviceAccount,
+                        volumes,
                     },
                 },
             },
