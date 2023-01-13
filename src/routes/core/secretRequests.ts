@@ -7,6 +7,7 @@ import {
 import { coreClient } from "../../utils/apiClientUtil";
 import { SecretUtil } from "@crypto-jambot/secret-manager-utils";
 import { Router } from "express";
+import { V1Secret } from "@kubernetes/client-node";
 export const secretRouter = Router();
 
 type SecretBody = {
@@ -17,8 +18,9 @@ type SecretBody = {
     annotations?: Record<string, string>;
     labels?: Record<string, string>;
 };
-const privateKeyUtil = new SecretUtil();
-const publicKeyUtil = new SecretUtil();
+const keyFile = process.env.CREDENTIALS_PATH;
+const privateKeyUtil = new SecretUtil({ keyFile });
+const publicKeyUtil = new SecretUtil({ keyFile });
 
 secretRouter.use("/:name/:namespace?", (req, res, next) => {
     const { name, namespace = "default" } = req.params;
@@ -53,7 +55,7 @@ secretRouter.post("/:name/:namespace?", async (req, res) => {
         const publicKey = encode(
             (await publicKeyUtil.getSecretPayload(secretCertKey)) as Uint8Array
         );
-        const secretRequest = {
+        const secretRequest: V1Secret = {
             apiVersion: "v1",
             metadata: {
                 name,
