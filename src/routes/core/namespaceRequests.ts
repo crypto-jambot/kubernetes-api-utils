@@ -1,22 +1,31 @@
-import { makeRequest, middleware } from "../../utils/helperFunctions";
 import { coreClient } from "../../utils/apiClientUtil";
 import { Router } from "express";
+import {
+    createDeleteRequest,
+    createGetRequest,
+    createMiddleware,
+    createPostRequest,
+} from "../../utils/routerUtils";
+import { V1Namespace, V1NamespaceList } from "@kubernetes/client-node";
 
 export const nameSpaceRouter = Router();
 
-nameSpaceRouter.use("/", (req, res, next) => {
-    console.log(new Date());
-    console.log("Getting namespaces");
-    next();
+createMiddleware(nameSpaceRouter, "namespace", false);
+
+createPostRequest(nameSpaceRouter, (name) => {
+    return coreClient.createNamespace({
+        apiVersion: "v1",
+        metadata: { name },
+    });
 });
 
-nameSpaceRouter.get("/", async (req, res) => {
-    try {
-        const { body, response } = await makeRequest(
-            coreClient.listNamespace("true")
-        );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
+createDeleteRequest(nameSpaceRouter, (name) => {
+    return coreClient.deleteNamespace(name, "true");
+});
+
+createGetRequest<V1Namespace | V1NamespaceList>(nameSpaceRouter, (name) => {
+    if (name === "all") {
+        return coreClient.listNamespace("true");
     }
+    return coreClient.readNamespace(name);
 });
