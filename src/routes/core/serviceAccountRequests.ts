@@ -1,51 +1,33 @@
 import { coreClient } from "../../utils/apiClientUtil";
 import { Router } from "express";
+import { makeRequest, removeEmpty } from "../../utils/helperFunctions";
 import {
-    makeRequest,
-    middleware,
-    removeEmpty,
-} from "../../utils/helperFunctions";
-import { V1ServiceAccount } from "@kubernetes/client-node";
+    V1LocalObjectReference,
+    V1ObjectReference,
+    V1ServiceAccount,
+} from "@kubernetes/client-node";
+import {
+    createDeleteRequest,
+    createGetRequest,
+    createMiddleware,
+    createPostRequest,
+} from "../../utils/routerUtils";
 
 export const serviceAccountRouter = Router();
 
 type ServiceAccountBody = {
     automountServiceAccountToken?: boolean;
-    secrets?: Secret[];
-    imagePullSecrets: ImagePullSecret[];
-};
-type Secret = {
-    name: string;
-    namespace: string;
-    apiVersion: string;
-    kind: string;
-    uid: string;
-    fieldPath: string;
-    resourceVersion: string;
-};
-type ImagePullSecret = {
-    name: string;
+    secrets?: V1ObjectReference[];
+    imagePullSecrets: V1LocalObjectReference[];
 };
 
-serviceAccountRouter.use("/:name/:namespace?", (req, res, next) => {
-    const { name, namespace = "default" } = req.params;
-    middleware(req, "service account", next, namespace, name);
-});
+createMiddleware(serviceAccountRouter, "service account");
 
-serviceAccountRouter.use("/:namespace?", (req, res, next) => {
-    if (req.method !== "GET") {
-        next();
-        return;
-    }
-    const { namespace = "default" } = req.params;
-    middleware(req, "service accounts", next, namespace);
-});
-
-serviceAccountRouter.post("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    const { secrets, imagePullSecrets, automountServiceAccountToken } =
-        req.body as ServiceAccountBody;
-    try {
+createPostRequest<V1ServiceAccount, ServiceAccountBody>(
+    serviceAccountRouter,
+    (name, namespace, requestBody) => {
+        const { secrets, imagePullSecrets, automountServiceAccountToken } =
+            requestBody;
         const serviceAccountRequest: V1ServiceAccount = {
             apiVersion: "v1",
             metadata: {
@@ -55,43 +37,40 @@ serviceAccountRouter.post("/:name/:namespace?", async (req, res) => {
             secrets,
             imagePullSecrets,
         };
+        return coreClient.createNamespacedServiceAccount(
+            namespace,
+            removeEmpty(serviceAccountRequest)
+        );
+    }
+);
+
+createDeleteRequest(serviceAccountRouter, (name, namespace) => {
+    return coreClient.deleteNamespacedServiceAccount(name, namespace);
+});
+
+createGetRequest(serviceAccountRouter, (name, namespace) => {
+    return coreClient.readNamespacedServiceAccount(name, namespace, "true");
+});
+
+//Request for getting access token for dashboard
+serviceAccountRouter.get("/", async (req, res) => {
+    try {
         const { response, body } = await makeRequest(
-            coreClient.createNamespacedServiceAccount(
-                namespace,
-                removeEmpty(serviceAccountRequest)
+            coreClient.createNamespacedServiceAccountToken(
+                "default",
+                "default",
+                {
+                    spec: {
+                        audiences: [],
+                    },
+                }
             )
         );
-        res.status(response.statusCode as number).json(body);
+        res.status(response.statusCode as number).json({
+            token: body.status?.token,
+        });
     } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
-});
-
-serviceAccountRouter.delete("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    try {
-        const { response, body } = await makeRequest(
-            coreClient.deleteNamespacedServiceAccount(name, namespace, "true")
-        );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
-});
-
-serviceAccountRouter.get("/:namespace?", async (req, res) => {
-    const { namespace = "default" } = req.params;
-    try {
-        const { response, body } =
-            namespace === "all"
-                ? await makeRequest(
-                      coreClient.listServiceAccountForAllNamespaces()
-                  )
-                : await makeRequest(
-                      coreClient.listNamespacedServiceAccount(namespace, "true")
-                  );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
+        console.log(err);
         res.status(err.statusCode).json(err.message);
     }
 });
