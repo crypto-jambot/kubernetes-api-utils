@@ -1,11 +1,16 @@
-import { networkingClient } from "../../utils/apiClientUtil";
+import { coreClient, networkingClient } from "../../utils/apiClientUtil";
 import { Router } from "express";
+import { makeRequest, removeEmpty } from "../../utils/helperFunctions";
+import { V1Ingress, V1IngressSpec } from "@kubernetes/client-node";
 import {
-    makeRequest,
-    middleware,
-    removeEmpty,
-} from "../../utils/helperFunctions";
-import { V1Ingress } from "@kubernetes/client-node";
+    createDeleteRequest,
+    createGetRequest,
+    createMiddleware,
+    createPostRequest,
+    createPutRequest,
+    putRequestHeaders,
+} from "../../utils/routerUtils";
+import * as net from "net";
 
 type IngressBody = {
     secretName: string;
@@ -13,44 +18,48 @@ type IngressBody = {
     rewriteTarget?: string;
     paths: Path[];
     labels?: Record<string, string>;
+    annotations?: Record<string, string>;
+    isNginx?: boolean;
+};
+type UpdateBody = {
+    spec: V1IngressSpec;
 };
 type Path = {
     appName: string;
     port: number;
     path: string;
     pathType: string;
-    keepPath: boolean;
 };
 export const ingressRouter = Router();
 
-// ingressRouter.use("/:name/:namespace?", (req, res, next) => {
-//     const { name, namespace = "default" } = req.params;
-//     middleware(req, "ingress", next, namespace, name);
-// });
-//
-// ingressRouter.use("/:namespace?", (req, res, next) => {
-//     if (req.method !== "GET") {
-//         next();
-//         return;
-//     }
-//     const { namespace = "default" } = req.params;
-//     middleware(req, "ingresses", next, namespace);
-// });
+createMiddleware(ingressRouter, "ingress");
 
-ingressRouter.post("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    const { secretName, hostname, paths, rewriteTarget, labels } =
-        req.body as IngressBody;
-    try {
+createPostRequest<V1Ingress, IngressBody>(
+    ingressRouter,
+    (name, namespace, requestBody) => {
+        const {
+            secretName,
+            hostname,
+            paths,
+            rewriteTarget,
+            labels,
+            annotations: incomingAnnotations,
+            isNginx,
+        } = requestBody;
+        let annotations = {
+            "nginx.ingress.kubernetes.io/rewrite-target": rewriteTarget ?? "/",
+        };
+        if (isNginx) {
+            annotations = {
+                ...annotations,
+                ...{ "kubernetes.io/ingress.class": "nginx" },
+            };
+        }
         const ingressRequest: V1Ingress = {
             apiVersion: "networking.k8s.io/v1",
             metadata: {
                 name: name,
-                annotations: {
-                    "kubernetes.io/ingress.class": "nginx",
-                    "nginx.ingress.kubernetes.io/rewrite-target":
-                        rewriteTarget ?? "/", //This is the regex pattern for your url
-                },
+                annotations: { ...annotations, ...incomingAnnotations },
                 labels,
             },
             spec: {
@@ -58,22 +67,24 @@ ingressRouter.post("/:name/:namespace?", async (req, res) => {
                     {
                         host: hostname,
                         http: {
-                            paths: paths.map((pathRule) => {
-                                const { port, path, appName, pathType } =
-                                    pathRule;
-                                return {
-                                    backend: {
-                                        service: {
-                                            name: appName,
-                                            port: {
-                                                number: port,
-                                            },
-                                        },
-                                    },
-                                    path,
-                                    pathType,
-                                };
-                            }),
+                            paths: paths
+                                ? paths.map((pathRule) => {
+                                      const { port, path, appName, pathType } =
+                                          pathRule;
+                                      return {
+                                          backend: {
+                                              service: {
+                                                  name: appName,
+                                                  port: {
+                                                      number: port,
+                                                  },
+                                              },
+                                          },
+                                          path,
+                                          pathType,
+                                      };
+                                  })
+                                : [],
                         },
                     },
                 ],
@@ -85,29 +96,38 @@ ingressRouter.post("/:name/:namespace?", async (req, res) => {
                 ],
             },
         };
-        console.log(removeEmpty(ingressRequest));
-        const { response, body } = await makeRequest(
-            networkingClient.createNamespacedIngress(
-                namespace,
-                removeEmpty(ingressRequest)
-            )
+        return networkingClient.createNamespacedIngress(
+            namespace,
+            removeEmpty(ingressRequest),
+            "true"
         );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
     }
+);
+
+createPutRequest<V1Ingress, UpdateBody>(
+    ingressRouter,
+    (name, namespace, originalRequest, requestBody) => {
+        originalRequest.spec = { ...originalRequest, ...requestBody.spec };
+        return networkingClient.patchNamespacedIngress(
+            name,
+            namespace,
+            originalRequest,
+            "true",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            putRequestHeaders
+        );
+    }
+);
+
+createDeleteRequest(ingressRouter, (name, namespace) => {
+    return networkingClient.deleteNamespacedIngress(name, namespace);
 });
 
-ingressRouter.delete("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    try {
-        const { response, body } = await makeRequest(
-            networkingClient.deleteNamespacedIngress(name, namespace, "true")
-        );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
+createGetRequest(ingressRouter, (name, namespace) => {
+    return networkingClient.readNamespacedIngress(name, namespace);
 });
 
 ingressRouter.get("/:namespace?", async (req, res) => {
