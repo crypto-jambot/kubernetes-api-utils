@@ -1,113 +1,102 @@
 import { appClient } from "../../utils/apiClientUtil";
-import { V1Deployment } from "@kubernetes/client-node";
-import { Router } from "express";
 import {
-    makeRequest,
-    middleware,
-    removeEmpty,
-} from "../../utils/helperFunctions";
+    V1Container,
+    V1Deployment,
+    V1DeploymentSpec,
+    V1Volume,
+} from "@kubernetes/client-node";
+
+import { Router } from "express";
+import { removeEmpty } from "../../utils/helperFunctions";
+import {
+    createDeleteRequest,
+    createGetRequest,
+    createMiddleware,
+    createPostRequest,
+    createPutRequest,
+    putRequestHeaders,
+} from "../../utils/routerUtils";
 
 type DeploymentBody = {
-    containerPort: number;
     replicas: number;
-    imageVersion: string;
     serviceAccount?: string;
     annotations?: Record<string, string>;
     labels?: Record<string, string>;
-    env: Env[];
+    containers: V1Container[];
+    volumes?: V1Volume[];
+    selectorLabels?: Record<string, string>;
 };
-type Env = {
-    name: string;
-    value: string;
+
+type UpdateBody = {
+    spec: V1DeploymentSpec;
 };
 
 export const deploymentRouter = Router();
 
-deploymentRouter.use("/:name?/:namespace?", (req, res, next) => {
-    const { name, namespace = "default" } = req.params;
-    middleware(req, "deployment", next, namespace, name);
-});
+createMiddleware(deploymentRouter, "deployment");
 
-deploymentRouter.post("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    const {
-        replicas,
-        containerPort,
-        imageVersion,
-        serviceAccount,
-        annotations,
-        labels,
-        env,
-    } = req.body as DeploymentBody;
-    try {
+createPostRequest<V1Deployment, DeploymentBody>(
+    deploymentRouter,
+    (name, namespace, requestBody) => {
+        const {
+            replicas,
+            serviceAccount,
+            annotations,
+            labels,
+            containers,
+            volumes,
+            selectorLabels = { app: name },
+        } = requestBody;
         const deploymentRequest: V1Deployment = {
             apiVersion: "apps/v1",
             metadata: { name, annotations, labels },
             spec: {
                 replicas,
                 selector: {
-                    matchLabels: {
-                        app: name,
-                    },
+                    matchLabels: selectorLabels,
                 },
                 template: {
                     metadata: {
-                        labels: {
-                            app: name,
-                        },
+                        labels: selectorLabels,
                     },
                     spec: {
-                        containers: [
-                            {
-                                name: name,
-                                image: `${name}:${imageVersion}`,
-                                imagePullPolicy: "Never",
-                                ports: [{ containerPort }],
-                                env,
-                                args: [],
-                            },
-                        ],
                         serviceAccount,
+                        containers,
+                        volumes,
                     },
                 },
             },
         };
-        const { response, body } = await makeRequest(
-            appClient.createNamespacedDeployment(
-                namespace,
-                removeEmpty(deploymentRequest),
-                "true"
-            )
+        return appClient.createNamespacedDeployment(
+            namespace,
+            removeEmpty(deploymentRequest),
+            "true"
         );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
     }
-});
-
-deploymentRouter.delete("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    try {
-        const { response, body } = await makeRequest(
-            appClient.deleteNamespacedDeployment(name, namespace, "true")
+);
+createPutRequest<V1Deployment, UpdateBody>(
+    deploymentRouter,
+    async (name, namespace, originalRequest, requestBody) => {
+        originalRequest.spec = {
+            ...originalRequest.spec,
+            ...requestBody.spec,
+        };
+        return appClient.patchNamespacedDeployment(
+            name,
+            namespace,
+            originalRequest,
+            "true",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            putRequestHeaders
         );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
     }
+);
+createDeleteRequest(deploymentRouter, (name, namespace) => {
+    return appClient.deleteNamespacedDeployment(name, namespace, "true");
 });
-
-deploymentRouter.get("/:namespace?", async (req, res) => {
-    const { namespace = "default" } = req.params;
-    try {
-        const { response, body } =
-            namespace === "all"
-                ? await makeRequest(appClient.listDeploymentForAllNamespaces())
-                : await makeRequest(
-                      appClient.listNamespacedDeployment(namespace, "true")
-                  );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
+createGetRequest(deploymentRouter, (name, namespace) => {
+    return appClient.readNamespacedDeployment(name, namespace, "true");
 });

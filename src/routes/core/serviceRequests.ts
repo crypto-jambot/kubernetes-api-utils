@@ -5,11 +5,23 @@ import {
     middleware,
     removeEmpty,
 } from "../../utils/helperFunctions";
-import { V1Service } from "@kubernetes/client-node";
+import {
+    V1Service,
+    V1ServicePort,
+    V1ServiceSpec,
+} from "@kubernetes/client-node";
+import {
+    createDeleteRequest,
+    createGetRequest,
+    createMiddleware,
+    createPostRequest,
+    createPutRequest,
+    putRequestHeaders,
+} from "../../utils/routerUtils";
 
 type ServiceBody = {
-    port: number;
-    targetPort: number;
+    type?: string;
+    ports: V1ServicePort[];
     externalIPs?: string[];
     loadBalancerIP?: string;
     clusterIP?: string;
@@ -28,8 +40,11 @@ type ServiceBody = {
     publishNotReadyAddresses?: boolean;
     annotations?: Record<string, string>;
     labels?: Record<string, string>;
+    selectorLabels?: Record<string, string>;
 };
-
+type UpdateBody = {
+    spec: V1ServiceSpec;
+};
 type SessionAffinityConfig = {
     clientIP: ClientIp;
 };
@@ -38,54 +53,14 @@ type ClientIp = {
 };
 export const serviceRouter = Router();
 
-serviceRouter.use("/:name/:namespace?", (req, res, next) => {
-    const { name, namespace = "default" } = req.params;
-    middleware(req, "service", next, namespace, name);
-});
+createMiddleware(serviceRouter, "service");
 
-serviceRouter.use("/:namespace?", (req, res, next) => {
-    if (req.method !== "GET") {
-        next();
-        return;
-    }
-    const { namespace = "default" } = req.params;
-    middleware(req, "services", next, namespace);
-});
-
-serviceRouter.post("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    const {
-        port,
-        targetPort,
-        externalIPs,
-        loadBalancerIP,
-        clusterIP,
-        loadBalancerSourceRanges,
-        healthCheckNodePort,
-        sessionAffinity,
-        externalTrafficPolicy,
-        clusterIPs,
-        externalName,
-        allocateLoadBalancerNodePorts,
-        ipFamilies,
-        ipFamilyPolicy,
-        loadBalancerClass,
-        internalTrafficPolicy,
-        sessionAffinityConfig,
-        publishNotReadyAddresses,
-        annotations,
-        labels,
-    } = req.body as ServiceBody;
-
-    const serviceRequest: V1Service = {
-        apiVersion: "v1",
-        metadata: {
-            name,
-            annotations,
-            labels,
-        },
-        spec: {
-            type: "LoadBalancer",
+createPostRequest<V1Service, ServiceBody>(
+    serviceRouter,
+    (name, namespace, requestBody) => {
+        const {
+            type = "LoadBalancer",
+            ports,
             externalIPs,
             loadBalancerIP,
             clusterIP,
@@ -102,49 +77,68 @@ serviceRouter.post("/:name/:namespace?", async (req, res) => {
             internalTrafficPolicy,
             sessionAffinityConfig,
             publishNotReadyAddresses,
-            selector: {
-                app: name,
+            annotations,
+            labels,
+            selectorLabels = { app: name },
+        } = requestBody;
+        const serviceRequest: V1Service = {
+            apiVersion: "v1",
+            metadata: {
+                name,
+                annotations,
+                labels,
             },
-            ports: [{ port, targetPort, protocol: "TCP", name }],
-        },
-    };
-
-    try {
-        const { response, body } = await makeRequest(
-            coreClient.createNamespacedService(
-                namespace,
-                removeEmpty(serviceRequest)
-            )
+            spec: {
+                type,
+                externalIPs,
+                loadBalancerIP,
+                clusterIP,
+                loadBalancerSourceRanges,
+                healthCheckNodePort,
+                sessionAffinity,
+                externalTrafficPolicy,
+                clusterIPs,
+                externalName,
+                allocateLoadBalancerNodePorts,
+                ipFamilies,
+                ipFamilyPolicy,
+                loadBalancerClass,
+                internalTrafficPolicy,
+                sessionAffinityConfig,
+                publishNotReadyAddresses,
+                selector: selectorLabels,
+                ports,
+            },
+        };
+        return coreClient.createNamespacedService(
+            namespace,
+            removeEmpty(serviceRequest)
         );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
     }
+);
+
+createPutRequest<V1Service, UpdateBody>(
+    serviceRouter,
+    (name, namespace, originalRequest, requestBody) => {
+        originalRequest.spec = { ...originalRequest.spec, ...requestBody.spec };
+        return coreClient.patchNamespacedService(
+            name,
+            namespace,
+            originalRequest,
+            "true",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            putRequestHeaders
+        );
+    }
+);
+
+createDeleteRequest(serviceRouter, (name, namespace) => {
+    return coreClient.deleteNamespacedService(name, namespace, "true");
 });
 
-serviceRouter.delete("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    try {
-        const { response, body } = await makeRequest(
-            coreClient.deleteNamespacedService(name, namespace)
-        );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
-});
-
-serviceRouter.get("/:namespace?", async (req, res) => {
-    const { namespace = "default" } = req.params;
-    try {
-        const { response, body } =
-            namespace === "all"
-                ? await makeRequest(coreClient.listServiceForAllNamespaces())
-                : await makeRequest(
-                      coreClient.listNamespacedService(namespace, "true")
-                  );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err?.statusCode).json(err?.message);
-    }
+createGetRequest(serviceRouter, (namespace, name) => {
+    return coreClient.readNamespacedService(name, namespace);
 });

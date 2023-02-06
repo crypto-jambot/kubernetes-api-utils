@@ -1,11 +1,22 @@
 import { rbacClient } from "../../utils/apiClientUtil";
 import { Router } from "express";
-import { makeRequest, middleware } from "../../utils/helperFunctions";
+import {
+    createDeleteRequest,
+    createGetRequest,
+    createMiddleware,
+    createPostRequest,
+    createPutRequest,
+    putRequestHeaders,
+} from "../../utils/routerUtils";
+import { V1RoleBinding } from "@kubernetes/client-node";
 export const roleBindingRouter = Router();
 
 type RoleBindingBody = {
     subjects: Subject[];
     roleRef: RoleRef;
+};
+type UpdateBody = {
+    subjects: Subject[];
 };
 type Subject = {
     name: string;
@@ -17,78 +28,59 @@ type RoleRef = {
     kind: string;
 };
 
-roleBindingRouter.use("/:name/:namespace?", (req, res, next) => {
-    if (req.method === "GET") {
-        next();
-        return;
-    }
-    const { name, namespace = "default" } = req.params;
-    middleware(req, "role binding", next, namespace, name);
-});
+createMiddleware(roleBindingRouter, "role binding");
 
-roleBindingRouter.use("/:namespace?", (req, res, next) => {
-    if (req.method !== "GET") {
-        next();
-        return;
+createPostRequest<V1RoleBinding, RoleBindingBody>(
+    roleBindingRouter,
+    (name, namespace, requestBody) => {
+        const { subjects: initialSubjects, roleRef: initialRoleRef } =
+            requestBody;
+        // const authorizationNameGroup = "rbac.authorization.k8s.io";
+        const authorizationNameGroup = "";
+        const subjects = initialSubjects.map((subject) => ({
+            ...subject,
+            apiGroup: authorizationNameGroup,
+        }));
+        const roleRef = {
+            ...initialRoleRef,
+            apiGroup: authorizationNameGroup,
+        };
+        return rbacClient.createNamespacedRoleBinding(namespace, {
+            apiVersion: "rbac.authorization.k8s.io/v1",
+            metadata: {
+                name,
+            },
+            subjects,
+            roleRef,
+        });
     }
-    const { namespace = "default" } = req.params;
-    middleware(req, "role bindings", next, namespace);
-});
+);
 
-roleBindingRouter.post("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    const { subjects: initialSubjects, roleRef: initialRoleRef } =
-        req.body as RoleBindingBody;
-    // const authorizationNameGroup = "rbac.authorization.k8s.io";
-    const authorizationNameGroup = "";
-    const subjects = initialSubjects.map((subject) => ({
-        ...subject,
-        apiGroup: authorizationNameGroup,
-    }));
-    const roleRef = {
-        ...initialRoleRef,
-        apiGroup: authorizationNameGroup,
-    };
-    try {
-        const { response, body } = await makeRequest(
-            rbacClient.createNamespacedRoleBinding(namespace, {
-                apiVersion: "rbac.authorization.k8s.io/v1",
-                metadata: {
-                    name,
-                },
-                subjects,
-                roleRef,
-            })
+createPutRequest<V1RoleBinding, UpdateBody>(
+    roleBindingRouter,
+    (name, namespace, originalRequest, requestBody) => {
+        originalRequest.subjects = [
+            ...(originalRequest.subjects ?? []),
+            ...(requestBody.subjects ?? []),
+        ];
+        return rbacClient.patchNamespacedRoleBinding(
+            name,
+            namespace,
+            originalRequest,
+            "true",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            putRequestHeaders
         );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
     }
+);
+
+createDeleteRequest(roleBindingRouter, (name, namespace) => {
+    return rbacClient.deleteNamespacedRoleBinding(name, namespace, "true");
 });
 
-roleBindingRouter.delete("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    try {
-        const { response, body } = await makeRequest(
-            rbacClient.deleteNamespacedRoleBinding(name, namespace, "true")
-        );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
-});
-
-roleBindingRouter.get("/:namespace?", async (req, res) => {
-    const { namespace = "default" } = req.params;
-    try {
-        const { response, body } =
-            namespace === "all"
-                ? await makeRequest(rbacClient.listRoleForAllNamespaces())
-                : await makeRequest(
-                      rbacClient.listNamespacedRoleBinding(namespace, "true")
-                  );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
+createGetRequest(roleBindingRouter, (name, namespace) => {
+    return rbacClient.readNamespacedRoleBinding(name, namespace, "true");
 });

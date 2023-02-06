@@ -1,17 +1,24 @@
-import {
-    makeRequest,
-    middleware,
-    removeEmpty,
-} from "../../utils/helperFunctions";
+import { removeEmpty } from "../../utils/helperFunctions";
 import { rbacClient } from "../../utils/apiClientUtil";
 import { Router } from "express";
-import { V1Role } from "@kubernetes/client-node";
+import { V1PolicyRule, V1Role } from "@kubernetes/client-node";
+import {
+    createDeleteRequest,
+    createGetRequest,
+    createMiddleware,
+    createPostRequest,
+    createPutRequest,
+    putRequestHeaders,
+} from "../../utils/routerUtils";
 
 export const roleRouter = Router();
 type RoleBody = {
     rules: Rule[];
     annotations: Record<string, string>;
     labels: Record<string, string>;
+};
+type UpdateBody = {
+    rules: V1PolicyRule[];
 };
 type Rule = {
     apiGroups: string[];
@@ -21,24 +28,14 @@ type Rule = {
     nonResourceURLs?: string[];
 };
 
-roleRouter.use("/:name/:namespace?", (req, res, next) => {
-    const { name, namespace = "default" } = req.params;
-    middleware(req, "role", next, namespace, name);
-});
+createMiddleware(roleRouter, "role");
 
-roleRouter.use("/:namespace?", (req, res, next) => {
-    if (req.method !== "GET") {
-        next();
-        return;
-    }
-    const { namespace = "default" } = req.params;
-    middleware(req, "roles", next, namespace);
-});
-
-roleRouter.post("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    const { rules, annotations, labels } = req.body as RoleBody;
-    try {
+createPostRequest<V1Role, RoleBody>(
+    roleRouter,
+    async (name, namespace, requestBody) => {
+        const { rules, annotations, labels } = requestBody;
+        const awaited = (await rbacClient.readNamespacedRole(name, namespace))
+            .body;
         const roleRequest: V1Role = {
             apiVersion: "rbac.authorization.k8s.io/v1",
             metadata: {
@@ -48,38 +45,38 @@ roleRouter.post("/:name/:namespace?", async (req, res) => {
             },
             rules,
         };
-        const { response, body } = await makeRequest(
-            rbacClient.createNamespacedRole(namespace, removeEmpty(roleRequest))
+        return rbacClient.createNamespacedRole(
+            namespace,
+            removeEmpty(roleRequest)
         );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
     }
+);
+
+createPutRequest<V1Role, UpdateBody>(
+    roleRouter,
+    (name, namespace, originalRequest, requestBody) => {
+        originalRequest.rules = [
+            ...(originalRequest.rules ?? []),
+            ...(requestBody.rules ?? []),
+        ];
+        return rbacClient.patchNamespacedRole(
+            name,
+            namespace,
+            originalRequest,
+            "true",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            putRequestHeaders
+        );
+    }
+);
+
+createDeleteRequest(roleRouter, (name, namespace) => {
+    return rbacClient.deleteNamespacedRole(name, namespace, "true");
 });
 
-roleRouter.delete("/:name/:namespace?", async (req, res) => {
-    const { name, namespace = "default" } = req.params;
-    try {
-        const { response, body } = await makeRequest(
-            rbacClient.deleteNamespacedRole(name, namespace, "true")
-        );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
-});
-
-roleRouter.get("/:namespace?", async (req, res) => {
-    const { namespace = "default" } = req.params;
-    try {
-        const { response, body } =
-            namespace === "all"
-                ? await makeRequest(rbacClient.listRoleForAllNamespaces())
-                : await makeRequest(
-                      rbacClient.listNamespacedRole(namespace, "true")
-                  );
-        res.status(response.statusCode as number).json(body);
-    } catch (err: any) {
-        res.status(err.statusCode).json(err.message);
-    }
+createGetRequest(roleRouter, (name, namespace) => {
+    return rbacClient.readNamespacedRole(name, namespace, "true");
 });
