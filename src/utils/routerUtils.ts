@@ -53,11 +53,13 @@ export function createPutRequest<T, U>(
         const { name, namespace = "default" } = req.params;
         try {
             const originalRequest = await makeAxiosRequest<T>(
-                `${req.protocol}://${req.hostname}:${process.env.PORT || 3000}${
+                `${req.protocol}://localhost:${process.env.PORT || 3000}${
                     req.baseUrl
                 }/${name}/${namespace}`,
                 "GET",
-                { Authorization: req.headers.authorization }
+                {
+                    Authorization: req.headers.authorization,
+                }
             );
             const { response, body } = await makeRequest(
                 callback(name, namespace, originalRequest, req.body)
