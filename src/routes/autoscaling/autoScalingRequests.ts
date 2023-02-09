@@ -20,19 +20,10 @@ export const autoscalingRouter = Router();
 type AutoscalingBody = {
     annotations?: Record<string, string>;
     labels?: Record<string, string>;
-    spec: CustomSpec;
+    spec: V2HorizontalPodAutoscalerSpec;
 };
 type UpdateBody = {
     spec: V2HorizontalPodAutoscalerSpec;
-};
-type CustomSpec = {
-    minReplicas: number;
-    maxReplicas: number;
-    scaleTargetRef: {
-        name: string;
-    };
-    metrics?: V2MetricSpec[];
-    behavior: V2HorizontalPodAutoscalerBehavior;
 };
 
 createMiddleware(autoscalingRouter, "autoscaling");
@@ -42,13 +33,15 @@ createPostRequest<V2HorizontalPodAutoscaler, AutoscalingBody>(
     (name, namespace, requestBody) => {
         const { annotations, labels, spec: customSpec } = requestBody;
         const defaultSpec = {
-            scaleTargetRef: {
-                name,
-                apiVersion: "",
-                kind: "ServiceAccount",
+            spec: {
+                scaleTargetRef: {
+                    name,
+                    apiVersion: "apps/v1",
+                    kind: "Deployment",
+                },
             },
         };
-        const spec = { ...customSpec, ...defaultSpec };
+        const spec = { ...defaultSpec.spec, ...customSpec };
         const autoscalingRequest: V2HorizontalPodAutoscaler = {
             apiVersion: "autoscaling/v2",
             metadata: { name, annotations, labels },
